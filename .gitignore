@@ -1,0 +1,11 @@
+# Папки сборки и кэша
+build/
+dist/
+node_modules/
+
+# Локальные настройки IDE (JetBrains)
+.idea/
+
+# Файлы операционной системы
+.DS_Store
+Thumbs.db

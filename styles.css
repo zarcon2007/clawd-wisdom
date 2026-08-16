@@ -1,0 +1,182 @@
+/* =====================================================================
+   CLAWD Wisdom — пиксельная эстетика (ретро-консоли 90-х, Game Boy / SNES).
+   Тёмный глубокий фон — чистый холст; акценты — яркий бирюзовый.
+   Всё позиционирование маскота и облачка — через transform, без reflow.
+   ===================================================================== */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;          /* страница — чистый холст без скролла */
+}
+
+body {
+  background: #0f0f23;       /* глубокий тёмно-синий фон */
+  font-family: "Courier New", "Lucida Console", monospace;
+  user-select: none;         /* не даём выделять текст при кликах */
+  cursor: default;
+}
+
+/* =====================================================================
+   Маскот-котик
+   ===================================================================== */
+
+.mascot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 144px;              /* 48×48 внутренне → 3× на экране */
+  height: 144px;
+  image-rendering: pixelated; /* сохраняем пиксельную чёткость при масштабе */
+  z-index: 10;               /* поверх всего фона */
+  pointer-events: none;      /* клики проходят сквозь маскота */
+  will-change: transform;    /* движение только через transform — GPU-композит */
+}
+
+/* =====================================================================
+   Облачко подсказки (появляется в точке клика)
+   ===================================================================== */
+
+.tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  max-width: 360px;
+  padding: 12px 14px;
+  background: #f5f0e1;       /* светлый пергаментный фон */
+  color: #2b1a12;            /* тёмный текст */
+  border: 3px solid #2b1a12; /* пиксельная рамка */
+  border-radius: 0;          /* прямые углы вместо скруглений */
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.5); /* жёсткая «блочная» тень */
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  pointer-events: auto;
+}
+
+/* Хвостик облачка — ступенчатый пиксельный треугольник, указывает на
+   точку клика. Тёмный, как рамка, чтобы читаться как продолжение контура. */
+.tip::after {
+  content: "";
+  position: absolute;
+  width: 22px;
+  height: 18px;
+  background: #2b1a12;
+  pointer-events: none;
+}
+
+/* Хвостик сверху (облачко под точкой клика) */
+.tip--tail-t::after {
+  top: -17px;
+  left: 50%;
+  translate: -50% 0;
+  width: 18px;
+  height: 22px;
+  clip-path: polygon(
+    50% 0, 33% 5px, 22% 5px, 22% 10px, 11% 10px,
+    11% 22px, 89% 22px, 89% 10px, 78% 10px, 78% 5px, 67% 5px
+  );
+}
+
+/* Хвостик снизу (облачко над точкой клика) */
+.tip--tail-b::after {
+  bottom: -17px;
+  left: 50%;
+  translate: -50% 0;
+  width: 18px;
+  height: 22px;
+  clip-path: polygon(
+    50% 22px, 33% 17px, 22% 17px, 22% 12px, 11% 12px,
+    11% 0, 89% 0, 89% 12px, 78% 12px, 78% 17px, 67% 17px
+  );
+}
+
+/* Появление облачка: пиксельный «прыжок» (свойство translate + opacity,
+   не конфликтует с позиционирующим transform: translate3d). */
+.tip--pop {
+  animation: tip-pop 0.22s steps(4, end);
+}
+
+@keyframes tip-pop {
+  from {
+    translate: 0 8px;
+    opacity: 0;
+  }
+  to {
+    translate: 0 0;
+    opacity: 1;
+  }
+}
+
+/* Скрытое состояние — атрибут hidden, усиленное (класс задаёт display позже) */
+.tip[hidden] {
+  display: none !important;
+}
+
+/* =====================================================================
+   Счётчик (правый верхний угол): подпись и два числа под ней —
+   сколько подсказок открыто и сколько осталось в мешке.
+   ===================================================================== */
+
+.counter {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  min-width: 122px;
+  padding: 8px 12px;
+  background: #16213e;       /* тёмный фон */
+  color: #5ce1e6;            /* контрастный бирюзовый текст */
+  border: 3px solid #5ce1e6; /* пиксельная рамка */
+  border-radius: 0;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.45);
+  font-family: "Courier New", monospace;
+}
+
+/* Подпись счётчика */
+.counter__label {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: #9be7ea;
+  border-bottom: 1px dashed #5ce1e6;
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+/* Строка числа: слева цифра, справа подпись */
+.counter__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  line-height: 1.6;
+}
+
+.counter__num {
+  color: #ffd23f;            /* золотые цифры — яркий акцент */
+  font-size: 15px;
+  font-weight: bold;
+}
+
+.counter__cap {
+  color: #5ce1e6;
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Вспышка счётчика при открытии подсказки */
+.counter--bump {
+  animation: counter-bump 0.3s steps(3, end);
+}
+
+@keyframes counter-bump {
+  from {
+    scale: 1.3;
+    color: #ffd23f;          /* на миг — золотой */
+  }
+  to {
+    scale: 1;
+  }
+}

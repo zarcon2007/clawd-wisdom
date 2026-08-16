@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLAWD Wisdom</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!--
+    Холст маскота. Внутреннее разрешение 48×48 задаётся в JS, на экране
+    масштабируется до 144×144 через CSS с image-rendering: pixelated.
+    pointer-events: none — клики проходят сквозь маскота к window.
+  -->
+  <canvas id="cat" class="mascot" aria-hidden="true"></canvas>
+
+  <!--
+    Облачко подсказки. Появляется в точке клика, позиционируется через
+    transform (translate3d), появление — CSS-анимация (свойство translate + opacity).
+    Прячется атрибутом hidden.
+  -->
+  <div id="tip" class="tip" role="status" aria-live="polite" hidden></div>
+
+  <!--
+    Счётчик: подпись и два числа под ней —
+    сколько подсказок открыто и сколько осталось в мешке.
+  -->
+  <div id="counter" class="counter" role="status" aria-live="polite">
+    <div class="counter__label">Tips</div>
+    <div class="counter__row">
+      <span id="counterOpen" class="counter__num">0</span>
+      <span class="counter__cap">opened</span>
+    </div>
+    <div class="counter__row">
+      <span id="counterLeft" class="counter__num">30</span>
+      <span class="counter__cap">left</span>
+    </div>
+  </div>
+
+  <!-- Данные подсказок загружаются первыми, затем логика приложения -->
+  <script src="js/data.js" defer></script>
+  <script src="js/script.js" defer></script>
+</body>
+</html>
