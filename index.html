@@ -9,17 +9,20 @@
 <body>
   <!--
     Холст маскота. Внутреннее разрешение 48×48 задаётся в JS, на экране
-    масштабируется до 144×144 через CSS с image-rendering: pixelated.
-    pointer-events: none — клики проходят сквозь маскота к window.
+    масштабируется через CSS (144×144, на узких окнах до 120×120) с
+    image-rendering: pixelated. Фактический размер JS читает из
+    canvas.offsetWidth (syncMascotSize). pointer-events: none — клики
+    проходят сквозь маскота к window.
   -->
   <canvas id="cat" class="mascot" aria-hidden="true"></canvas>
 
   <!--
-    Облачко подсказки. Появляется в точке клика, позиционируется через
-    transform (translate3d), появление — CSS-анимация (свойство translate + opacity).
-    Прячется атрибутом hidden.
+    Контейнер подсказок — aria-live="polite" регион: скринридер объявляет
+    только добавляемый текст. Без role="status": роль подразумевает
+    aria-atomic и перечитывала бы всё содержимое. Контейнер живёт в DOM
+    постоянно — его нельзя удалять; облачка создаются и удаляются внутри.
   -->
-  <div id="tip" class="tip" role="status" aria-live="polite" hidden></div>
+  <div id="tips" class="tips" aria-live="polite"></div>
 
   <!--
     Счётчик: подпись и два числа под ней —

@@ -199,8 +199,18 @@ const CLAWD = (() => {
   const SRC = 24;          // размер авторского кадра
   const SCALE = 2;         // масштаб до базового размера
   const FRAME = SRC * SCALE; // 48
-  const DISPLAY = 144;     // CSS px на экране
-  const HALF = DISPLAY / 2; // половина маскота (для центрирования)
+  let display = 144;       // CSS px на экране (144; на узких окнах 120 — см. медиазапрос)
+  let half = display / 2;  // половина маскота (для центрирования)
+
+  // Фактический CSS-размер маскота читаем из canvas.offsetWidth — единый
+  // источник правды, чтобы JS совпадал с медиазапросом (на узких окнах 120 px)
+  function syncMascotSize() {
+    const w = canvas.offsetWidth;
+    if (w > 0) {
+      display = w;
+      half = w / 2;
+    }
+  }
 
   // Собираем спрайт-лист в offscreen-canvas
   const sheet = document.createElement('canvas');
@@ -229,7 +239,7 @@ const CLAWD = (() => {
   canvas.height = FRAME;
   ctx.imageSmoothingEnabled = false; // на случай масштабированных drawImage
 
-  const tipEl = document.getElementById('tip');
+  const containerEl = document.getElementById('tips');
   const counterEl = document.getElementById('counter');
   const counterOpenEl = document.getElementById('counterOpen');
   const counterLeftEl = document.getElementById('counterLeft');
@@ -237,6 +247,12 @@ const CLAWD = (() => {
   /* =====================================================================
      3. СОСТОЯНИЕ МАСКОТА
      ===================================================================== */
+
+  // Предпочтение «уменьшить движение»: при включённом маскот не перемещается
+  // по экрану (слушаем change, чтобы переключать режим на лету)
+  const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let prefersReduced = motion.matches;
+  motion.addEventListener?.('change', (ev) => { prefersReduced = ev.matches; });
 
   // Позиция — ЦЕНТР маскота в CSS px; позиционируем холст через transform.
   const pos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
@@ -267,9 +283,8 @@ const CLAWD = (() => {
   const MOVE_EPS = 35; // если скорость выше — анимация ходьбы
   let current = LAYOUT.idle[0];
 
-  // Облачко подсказки
-  const TIP_LIFETIME = 6000;   // автоскрытие через 6 секунд
-  let tipTimer = 0;
+  // Облачко подсказки: живёт 20 секунд, потом исчезает само
+  const TIP_LIFETIME = 20000;
 
   // Размер окна (кэш, чтобы не читать layout каждый кадр)
   const viewport = { w: window.innerWidth, h: window.innerHeight };
@@ -314,7 +329,7 @@ const CLAWD = (() => {
 
   // Случайная точка для плавания: маскот целиком остаётся на экране.
   function randomPoint() {
-    const m = HALF + 30; // отступ от краёв
+    const m = half + 30; // отступ от краёв
     const spanX = Math.max(0, viewport.w - 2 * m); // защита от крошечных окон
     const spanY = Math.max(0, viewport.h - 2 * m);
     return {
@@ -364,8 +379,8 @@ const CLAWD = (() => {
     if (mode === 'follow') {
       // Цель — курсор, ограниченный так, чтобы маскот не вылетал за экран
       steer(
-        clamp(pointer.x, HALF, viewport.w - HALF),
-        clamp(pointer.y, HALF, viewport.h - HALF),
+        clamp(pointer.x, half, viewport.w - half),
+        clamp(pointer.y, half, viewport.h - half),
         dt, FOLLOW_GAIN, MAX_SPEED_FOLLOW
       );
     } else {
@@ -383,8 +398,8 @@ const CLAWD = (() => {
       }
     }
     // Жёсткий clamp: маскот никогда не покидает видимую область
-    pos.x = clamp(pos.x, HALF, viewport.w - HALF);
-    pos.y = clamp(pos.y, HALF, viewport.h - HALF);
+    pos.x = clamp(pos.x, half, viewport.w - half);
+    pos.y = clamp(pos.y, half, viewport.h - half);
   }
 
   /* =====================================================================
@@ -435,56 +450,125 @@ const CLAWD = (() => {
   }
 
   /* =====================================================================
-     7. ПОДСКАЗКА В ТОЧКЕ КЛИКА
+     7. ПОДСКАЗКИ В ТОЧКЕ КЛИКА
      ===================================================================== */
 
-  function positionClickTip(px, py) {
-    const bw = tipEl.offsetWidth;   // размеры читаем после показа (без transform)
-    const bh = tipEl.offsetHeight;
-    const GAP = 14;
+  const MAX_TIPS = 3;        // одновременно не больше трёх подсказок
+  const activeTips = [];     // живые подсказки: { el, kb, anchor, expiresAt }
+                             // kb — слот клавиатуры (см. правку 4), -1 для мышиных;
+                             // anchor — точка появления (нужна для ре-клэмпа, правка 6)
+  const STEP = 26;           // сдвиг «ступеньки» между клавиатурными подсказками
 
-    // По умолчанию облачко — над точкой клика, хвостик снизу указывает на неё
+  // Свободный слот клавиатурной подсказки (0..MAX_TIPS-1): наименьший из
+  // незанятых kb-слотов, чтобы каскад не накладывался сам на себя
+  function nextKbSlot() {
+    const used = new Set(activeTips.filter((t) => t.kb >= 0).map((t) => t.kb));
+    for (let i = 0; i < MAX_TIPS; i++) {
+      if (!used.has(i)) return i;
+    }
+    return 0;
+  }
+
+  // Создаёт элемент облачка. Текст задаётся ДО вставки в контейнер — одним
+  // изменением в aria-live-регионе, чтобы скринридер объявил его один раз
+  function createTipElement(text) {
+    const el = document.createElement('div');
+    el.className = 'tip';
+    el.textContent = text;
+    return el;
+  }
+
+  const EDGE = 160;            // подсказка не появляется ближе 160 px к краю
+
+  // Допустимый отступ от края: 160 px по возможности; в узком окне — половина
+  // свободного места, чтобы подсказка всегда целиком помещалась на экране
+  function edgeMargin(axisSize, tipSize) {
+    return Math.min(EDGE, Math.max(0, (axisSize - tipSize) / 2));
+  }
+
+  // Позиционирует облачко около точки-якоря: обычно над ней, хвостик снизу
+  function positionTip(el, px, py) {
+    const bw = el.offsetWidth;   // размеры читаем после вставки в DOM
+    const bh = el.offsetHeight;
+    const GAP = 14;
+    const mx = edgeMargin(viewport.w, bw);
+    const my = edgeMargin(viewport.h, bh);
+
+    // По умолчанию облачко — над точкой, хвостик снизу указывает на неё
     let x = px - bw / 2;
     let y = py - GAP - bh;
     let tail = 'b';
 
-    if (y < 8) {
-      // Сверху не помещается — переворачиваем облачко под точку клика
+    if (y < my) {
+      // Сверху не помещается — переворачиваем облачко под точку
       y = py + GAP;
       tail = 't';
     }
 
     // Зажимаем координаты, чтобы текст не уезжал за край экрана
-    x = clamp(x, 8, Math.max(8, viewport.w - bw - 8));
-    y = clamp(y, 8, Math.max(8, viewport.h - bh - 8));
+    // (Math.max страхует от lo > hi, если облачко шире окна)
+    x = clamp(x, mx, Math.max(mx, viewport.w - bw - mx));
+    y = clamp(y, my, Math.max(my, viewport.h - bh - my));
 
-    tipEl.classList.toggle('tip--tail-b', tail === 'b');
-    tipEl.classList.toggle('tip--tail-t', tail === 't');
+    el.classList.toggle('tip--tail-b', tail === 'b');
+    el.classList.toggle('tip--tail-t', tail === 't');
 
-    tipEl.style.transform = 'translate3d(' + Math.round(x) + 'px, ' + Math.round(y) + 'px, 0)';
+    el.style.transform = 'translate3d(' + Math.round(x) + 'px, ' + Math.round(y) + 'px, 0)';
   }
 
-  function showClickTip(px, py) {
+  // Подсказки, уходящие с плавным затуханием. Удаляются по transitionend
+  // или по дедлайну в rAF-цикле (страховка, если transition не сработал)
+  const leavingTips = [];
+  const LEAVE_TIMEOUT = 500;   // максимум на анимацию ухода
+
+  function finalizeLeave(entry) {
+    const i = leavingTips.indexOf(entry);
+    if (i >= 0) leavingTips.splice(i, 1);
+    entry.el.remove();
+  }
+
+  // Убрать подсказку (эвикция самой старой или истечение срока жизни):
+  // элемент получает класс ухода и плавно исчезает через CSS-переход
+  function dismissTip(entry) {
+    const i = activeTips.indexOf(entry);
+    if (i >= 0) activeTips.splice(i, 1);
+
+    entry.leaving = true;
+    entry.leaveDeadline = performance.now() + LEAVE_TIMEOUT;
+    leavingTips.push(entry);
+
+    // Исключаем уходящий элемент из дерева доступности до его удаления —
+    // скринридер не «читает» затухающую подсказку повторно
+    entry.el.setAttribute('aria-hidden', 'true');
+
+    entry.el.classList.remove('tip--shown');
+    entry.el.classList.add('tip--leave');
+    // Одноразовый слушатель: удаляем сразу после первого transitionend
+    entry.el.addEventListener('transitionend', (ev) => {
+      if (ev.target === entry.el) finalizeLeave(entry);
+    }, { once: true });
+  }
+
+  // Показать подсказку: взять из мешка, вставить в контейнер, позиционировать
+  function spawnTip(px, py, kb) {
     const tip = TIPS[drawFromBag()];
     if (!tip) return; // пустые данные — показывать нечего
 
+    // Лимит MAX_TIPS: лишние вытесняем по одному, начиная с самой старой
+    while (activeTips.length >= MAX_TIPS) dismissTip(activeTips[0]);
+
     openedCount++;
-    tipEl.textContent = tip.text;
-    tipEl.hidden = false;
-    positionClickTip(px, py);
+    const el = createTipElement(tip.text);
+    containerEl.appendChild(el);
+    positionTip(el, px, py);
 
-    // Перезапуск CSS-анимации появления
-    tipEl.classList.remove('tip--pop');
-    void tipEl.offsetWidth;
-    tipEl.classList.add('tip--pop');
+    // Появление CSS-переходом: сначала reflow в базовом скрытом состоянии,
+    // затем класс .tip--shown запускает переход к видимому виду
+    void el.offsetWidth;
+    el.classList.add('tip--shown');
 
-    tipTimer = TIP_LIFETIME;
+    activeTips.push({ el, kb, anchor: { x: px, y: py }, expiresAt: performance.now() + TIP_LIFETIME });
     updateCounter();
-  }
-
-  function hideBubble() {
-    tipEl.hidden = true;
-    tipEl.classList.remove('tip--pop');
   }
 
   function updateCounter() {
@@ -512,8 +596,8 @@ const CLAWD = (() => {
 
     // Позиционирование маскота: левый верхний угол = центр − половина размера
     canvas.style.transform =
-      'translate3d(' + Math.round(pos.x - HALF) + 'px, ' +
-      Math.round(pos.y - HALF) + 'px, 0)';
+      'translate3d(' + Math.round(pos.x - half) + 'px, ' +
+      Math.round(pos.y - half) + 'px, 0)';
   }
 
   /* =====================================================================
@@ -527,18 +611,26 @@ const CLAWD = (() => {
     const dt = Math.min(0.05, (now - last) / 1000); // clamp: не прыгать после фокуса
     last = now;
 
-    updateMode();
-    updateMovement(dt);
+    // При prefers-reduced-motion маскот не летает по экрану — остаются
+    // только локальная анимация кадров (мигание/мяу) и подсказки
+    if (!prefersReduced) {
+      updateMode();
+      updateMovement(dt);
+    }
     updateAnim(dt * 1000);
 
     // Зеркалирование: направление по скорости (с порогом против дрожания)
     if (vel.x > 40) facing = 1;
     else if (vel.x < -40) facing = -1;
 
-    // Автоскрытие облачка через TIP_LIFETIME (тоже внутри общего цикла)
-    if (!tipEl.hidden) {
-      tipTimer -= dt * 1000;
-      if (tipTimer <= 0) hideBubble();
+    // Автоскрытие облачков через TIP_LIFETIME (тоже внутри общего цикла)
+    for (let i = activeTips.length - 1; i >= 0; i--) {
+      if (now >= activeTips[i].expiresAt) dismissTip(activeTips[i]);
+    }
+
+    // Резервное удаление уходящих, если transitionend не сработал
+    for (let i = leavingTips.length - 1; i >= 0; i--) {
+      if (now >= leavingTips[i].leaveDeadline) finalizeLeave(leavingTips[i]);
     }
 
     draw();
@@ -563,23 +655,44 @@ const CLAWD = (() => {
       return;
     }
     triggerAction();
-    showClickTip(e.clientX, e.clientY);
+    spawnTip(e.clientX, e.clientY, -1);
+  });
+
+  // Пробел и Enter показывают подсказку без мыши — у маскота, «ступенькой».
+  // Зажатие клавиши (e.repeat) и ввод в полях/кнопках игнорируются.
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat) return;
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
+    if (e.target.closest('a, button, input, select, textarea, [contenteditable]')) return;
+
+    e.preventDefault(); // Пробел не скроллит и не активирует сфокусированные элементы
+    triggerAction();
+    const slot = nextKbSlot();
+    spawnTip(pos.x + slot * STEP, pos.y + slot * STEP, slot);
   });
 
   window.addEventListener('resize', () => {
     viewport.w = window.innerWidth;
     viewport.h = window.innerHeight;
-    pos.x = clamp(pos.x, HALF, viewport.w - HALF);
-    pos.y = clamp(pos.y, HALF, viewport.h - HALF);
+    syncMascotSize();        // пересчёт размера маскота (медиазапрос 320 px)
+    pos.x = clamp(pos.x, half, viewport.w - half);
+    pos.y = clamp(pos.y, half, viewport.h - half);
+
+    // Ре-клэмп активных подсказок, чтобы при перетягивании окна
+    // они не уезжали за край экрана
+    for (const t of activeTips) positionTip(t.el, t.anchor.x, t.anchor.y);
   });
 
   /* =====================================================================
      11. СТАРТ
      ===================================================================== */
 
+  // Размер маскота из CSS (на узких окнах 120 px) — до стартового клэмпа
+  syncMascotSize();
+
   // Первоначальная позиция — центр окна
-  pos.x = clamp(viewport.w / 2, HALF, viewport.w - HALF);
-  pos.y = clamp(viewport.h / 2, HALF, viewport.h - HALF);
+  pos.x = clamp(viewport.w / 2, half, viewport.w - half);
+  pos.y = clamp(viewport.h / 2, half, viewport.h - half);
 
   // Начальные значения счётчика (без вспышки при загрузке)
   counterOpenEl.textContent = '0';
@@ -588,5 +701,5 @@ const CLAWD = (() => {
   draw();
   requestAnimationFrame(frame);
 
-  return { showClickTip }; // внешний интерфейс для отладки в консоли
+  return { spawnTip }; // внешний интерфейс для отладки в консоли
 })();
